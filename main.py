@@ -73,10 +73,27 @@ def resolve_users(client: WebClient, user_ids: set[str]) -> dict[str, str]:
         try:
             r = client.users_info(user=uid)
             p = r["user"]["profile"]
-            names[uid] = p.get("display_name") or p.get("real_name") or uid
+            names[uid] = (
+                p.get("real_name")
+                or p.get("real_name_normalized")
+                or p.get("display_name")
+                or uid
+            )
         except SlackApiError:
             names[uid] = uid
     return names
+
+
+def _collect_mentioned_user_ids(elements: list) -> set[str]:
+    """Recursively walk block-kit elements collecting user IDs from @-mentions."""
+    found: set[str] = set()
+    for el in elements or []:
+        if not isinstance(el, dict):
+            continue
+        if el.get("type") == "user" and el.get("user_id"):
+            found.add(el["user_id"])
+        found |= _collect_mentioned_user_ids(el.get("elements", []))
+    return found
 
 
 def fetch_thread(client: WebClient, channel: str, ts: str) -> dict:
@@ -87,7 +104,10 @@ def fetch_thread(client: WebClient, channel: str, ts: str) -> dict:
     messages = resp.get("messages", [])
     if not messages:
         raise RuntimeError("Thread is empty or not accessible")
-    user_ids = {m.get("user") for m in messages if m.get("user")}
+    user_ids: set[str] = {m.get("user") for m in messages if m.get("user")}
+    for m in messages:
+        user_ids |= set(MENTION_RE.findall(m.get("text", "") or ""))
+        user_ids |= _collect_mentioned_user_ids(m.get("blocks", []))
     return {
         "channel": channel,
         "messages": messages,

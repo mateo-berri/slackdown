@@ -1,25 +1,4 @@
 #!/usr/bin/env python3
-"""
-slack_thread_to_markdown.py (hybrid version)
-
-Convert a Slack thread URL into structured Markdown.
-
-Uses deterministic templating for the common case (text, mentions, links,
-basic mrkdwn, rich_text blocks, reactions). Falls back to Claude on a
-per-message basis when it encounters something unknown (file uploads,
-legacy attachments, non-rich_text blocks, unusual subtypes, etc).
-
-Setup:
-    pip install slack-sdk anthropic
-    export SLACK_BOT_TOKEN=xoxb-...
-    export ANTHROPIC_API_KEY=sk-ant-...   # only needed if fallback fires
-
-Usage:
-    python slack_thread_to_markdown.py "<slack_thread_url>"
-    python slack_thread_to_markdown.py <url> --no-fallback  # skip LLM, emit [unsupported] markers
-
-Always writes the rendered Markdown to ./thread.md and also echoes it to stdout.
-"""
 
 from __future__ import annotations
 
@@ -44,15 +23,11 @@ CHANNEL_REF_RE = re.compile(r"<#(C[A-Z0-9]+)(?:\|([^>]+))?>")
 LINK_LABELED_RE = re.compile(r"<((?:https?|mailto):[^|>]+)\|([^>]+)>")
 LINK_BARE_RE = re.compile(r"<((?:https?|mailto):[^>]+)>")
 
-# Subtypes that don't change rendering (regular messages from bots, broadcast replies).
 SAFE_SUBTYPES = {"bot_message", "thread_broadcast"}
 
 
 class UnsupportedElement(Exception):
-    """Raised when deterministic rendering hits something it doesn't handle."""
-
-
-# ---------- URL & Slack API ----------
+    pass
 
 
 def parse_slack_url(url: str) -> tuple[str, str]:
@@ -85,7 +60,6 @@ def resolve_users(client: WebClient, user_ids: set[str]) -> dict[str, str]:
 
 
 def _collect_mentioned_user_ids(elements: list) -> set[str]:
-    """Recursively walk block-kit elements collecting user IDs from @-mentions."""
     found: set[str] = set()
     for el in elements or []:
         if not isinstance(el, dict):
@@ -115,24 +89,17 @@ def fetch_thread(client: WebClient, channel: str, ts: str) -> dict:
     }
 
 
-# ---------- Deterministic rendering ----------
-
-
 def normalize_inline(text: str, users: dict[str, str]) -> str:
-    """Slack mrkdwn → Markdown for the parts that map cleanly."""
     text = MENTION_RE.sub(lambda m: f"@{users.get(m.group(1), m.group(1))}", text)
     text = CHANNEL_REF_RE.sub(lambda m: f"#{m.group(2) or m.group(1)}", text)
     text = LINK_LABELED_RE.sub(lambda m: f"[{m.group(2)}]({m.group(1)})", text)
     text = LINK_BARE_RE.sub(lambda m: m.group(1), text)
-    # *bold* → **bold** (word-boundary guard to avoid eating *not_bold* in code/paths)
     text = re.sub(r"(?<!\w)\*([^*\n]+)\*(?!\w)", r"**\1**", text)
-    # ~strike~ → ~~strike~~
     text = re.sub(r"(?<!\w)~([^~\n]+)~(?!\w)", r"~~\1~~", text)
     return text
 
 
 def render_rich_text_element(el: dict, users: dict) -> str:
-    """Render an inline element inside a rich_text section."""
     t = el.get("type")
     if t == "text":
         s = el.get("text", "")
@@ -206,7 +173,6 @@ def _is_link_unfurl(att: dict, text: str) -> bool:
 
 
 def render_message_deterministic(msg: dict, users: dict) -> str:
-    """Render one message. Raises UnsupportedElement on anything unhandled."""
     text = msg.get("text", "")
     non_unfurl_attachments = [
         a for a in (msg.get("attachments") or []) if not _is_link_unfurl(a, text)
@@ -224,8 +190,6 @@ def render_message_deterministic(msg: dict, users: dict) -> str:
     return normalize_inline(msg.get("text", ""), users)
 
 
-# ---------- LLM fallback ----------
-
 FALLBACK_PROMPT = """Convert this Slack message JSON into clean Markdown.
 
 Output the message body only — no author header, no timestamp, no commentary,
@@ -240,7 +204,7 @@ Message:
 
 
 def render_message_via_llm(msg: dict, users: dict, model: str) -> str:
-    import anthropic  # lazy import so --no-fallback works without it
+    import anthropic
 
     client = anthropic.Anthropic()
     resp = client.messages.create(
@@ -257,9 +221,6 @@ def render_message_via_llm(msg: dict, users: dict, model: str) -> str:
         ],
     )
     return "".join(b.text for b in resp.content if b.type == "text").strip()
-
-
-# ---------- Assembly ----------
 
 
 @dataclass
@@ -332,9 +293,6 @@ def render_thread(thread: dict, *, allow_fallback: bool, model: str) -> tuple[st
     return "\n".join(lines), fallback_count
 
 
-# ---------- CLI ----------
-
-
 def main() -> int:
     p = argparse.ArgumentParser(description="Slack thread → structured Markdown")
     p.add_argument("url")
@@ -348,9 +306,9 @@ def main() -> int:
 
     output_path = "thread.md"
 
-    token = os.environ.get("SLACK_BOT_TOKEN")
+    token = os.environ.get("SLACK_TOKEN") or os.environ.get("SLACK_BOT_TOKEN")
     if not token:
-        print("error: SLACK_BOT_TOKEN not set", file=sys.stderr)
+        print("error: SLACK_TOKEN not set", file=sys.stderr)
         return 1
     if not args.no_fallback and not os.environ.get("ANTHROPIC_API_KEY"):
         print(

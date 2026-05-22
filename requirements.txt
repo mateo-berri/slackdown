@@ -1,0 +1,3 @@
+anthropic~=0.104
+python-dotenv~=1.2
+slack-sdk~=3.42

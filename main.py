@@ -16,8 +16,9 @@ Setup:
 
 Usage:
     python slack_thread_to_markdown.py "<slack_thread_url>"
-    python slack_thread_to_markdown.py <url> -o out.md
     python slack_thread_to_markdown.py <url> --no-fallback  # skip LLM, emit [unsupported] markers
+
+Always writes the rendered Markdown to ./thread.md and also echoes it to stdout.
 """
 
 from __future__ import annotations
@@ -317,7 +318,6 @@ def render_thread(thread: dict, *, allow_fallback: bool, model: str) -> tuple[st
 def main() -> int:
     p = argparse.ArgumentParser(description="Slack thread → structured Markdown")
     p.add_argument("url")
-    p.add_argument("-o", "--output")
     p.add_argument(
         "--no-fallback",
         action="store_true",
@@ -325,6 +325,8 @@ def main() -> int:
     )
     p.add_argument("--model", default="claude-opus-4-7")
     args = p.parse_args()
+
+    output_path = "thread.md"
 
     token = os.environ.get("SLACK_BOT_TOKEN")
     if not token:
@@ -353,12 +355,10 @@ def main() -> int:
         file=sys.stderr,
     )
 
-    if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
-            f.write(md)
-        print(f"wrote {args.output}", file=sys.stderr)
-    else:
-        sys.stdout.write(md)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(md)
+    print(f"wrote {output_path}", file=sys.stderr)
+    sys.stdout.write(md)
 
     return 0
 
